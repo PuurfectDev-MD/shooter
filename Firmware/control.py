@@ -1,11 +1,11 @@
 import time
 from machine import Pin, PWM, ADC
 
-azimuth = PWM(Pin(2, Pin.OUT), freq=50)
-altitude = PWM(Pin(3, Pin.OUT), freq=50)
+azimuth = PWM(Pin(33, Pin.OUT), freq=50)
+altitude = PWM(Pin(32, Pin.OUT), freq=50)
 
-joystick_x = ADC(Pin(34))
-joystick_y = ADC(Pin(35))
+joystick_x = ADC(Pin(27))
+joystick_y = ADC(Pin(26))
 
 joystick_x.atten(ADC.ATTN_11DB) 
 joystick_y.atten(ADC.ATTN_11DB)  
