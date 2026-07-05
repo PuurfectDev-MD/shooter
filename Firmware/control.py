@@ -1,20 +1,35 @@
 import time
 from machine import Pin, PWM, ADC
 
-# Initialize PWM pins
-azimuth = PWM(Pin(33, Pin.OUT), freq=50)
-altitude = PWM(Pin(32, Pin.OUT), freq=50)
+# Servo PWM pins mapped to D3 and D4
+x_axis = PWM(Pin(29), freq=50)
+y_axis = PWM(Pin(4), freq=50)
 
-# Initialize ADC pins for joystick
+# Joystick ADC pins mapped to D1 and D2 (GPIO 27 and 28)
 joystick_x = ADC(Pin(27))
-joystick_y = ADC(Pin(26))
+joystick_y = ADC(Pin(28))
 
-joystick_x.atten(ADC.ATTN_11DB) 
-joystick_y.atten(ADC.ATTN_11DB)  
+# CRITICAL FIX: No .atten() lines here! They crash the RP2040.
 
-def map_value(x, in_min=0, in_max=65535, out_min=40, out_max=115):
-    """
-    Maps ADC (0-65535) to standard Servo Duty values (approx 40 to 115).
-    77 is roughly the center point (1.5ms pulse) where continuous servos stop.
-    """
-    return int((x - in_min) / (in_max - in_min) * (out_max - out_min) + out_min)
+CENTER_VAL = 32768
+DEADZONE = 2000
+SMOOTHING = 0.2
+
+MIN_DUTY = 2500
+MAX_DUTY = 7000
+
+filtered_x = CENTER_VAL
+filtered_y = CENTER_VAL
+
+def get_filtered_reading(adc_pin, current_filtered):
+    # This reads 0-65535 natively on RP2040
+    raw = adc_pin.read_u16() 
+    if abs(raw - CENTER_VAL) < DEADZONE:
+        target = CENTER_VAL
+    else:
+        target = raw
+    updated_val = current_filtered + SMOOTHING * (target - current_filtered)
+    return updated_val
+
+def map_value(x, in_min, in_max, out_min, out_max):
+    return int((x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min)

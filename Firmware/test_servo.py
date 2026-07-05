@@ -1,47 +1,51 @@
-import machine
 import time
+from machine import Pin, PWM
 
-# Set up PWM on pins 32 and 33
-# Standard servo frequency is 50Hz (20ms period)
-servo1 = machine.PWM(machine.Pin(32), freq=50)
-servo2 = machine.PWM(machine.Pin(33), freq=50)
+# Initialize PWM pins for the servos at 50Hz
+servo_x = PWM(Pin(29), freq=50)
+servo_y = PWM(Pin(6), freq=50)
 
-def set_servo_pulse(servo, us):
+# 16-bit pulse width boundaries for typical 50Hz servos:
+# ~1ms pulse (0 degrees)   -> ~3276 duty
+# ~1.5ms pulse (90 degrees) -> ~4915 duty
+# ~2ms pulse (180 degrees)  -> ~6553 duty
+MIN_DUTY = 2500
+MAX_DUTY = 7000
+MID_DUTY = 4915
 
-    duty = int((us / 20000) * 1023)
-    servo.duty(duty)
+print("Centering servos...")
+servo_x.duty_u16(MID_DUTY)
+servo_y.duty_u16(MID_DUTY)
+time.sleep(1.5)
 
-print("Starting servo test... Press Ctrl+C to stop.")
+print("Starting sweep test. Press Ctrl+C in the terminal to stop.")
 
 try:
     while True:
-        # 1. Rotate Full Speed Forward
-        print("Rotating forward...")
-        set_servo_pulse(servo1, 2000) # Max speed forward
-        set_servo_pulse(servo2, 2000)
-        time.sleep(3)                 # Run for 3 seconds
-
-        # 2. Stop the servos
-        print("Stopping...")
-        set_servo_pulse(servo1, 1500) # Neutral/Stop pulse
-        set_servo_pulse(servo2, 1500)
-        time.sleep(2)                 # Stay stopped for 2 seconds
-
-        # 3. Rotate Full Speed Backward
-        print("Rotating backward...")
-        set_servo_pulse(servo1, 1000) # Max speed backward
-        set_servo_pulse(servo2, 1000)
-        time.sleep(3)                 # Run for 3 seconds
-
-        # 4. Stop the servos again
-        print("Stopping...")
-        set_servo_pulse(servo1, 1500)
-        set_servo_pulse(servo2, 1500)
-        time.sleep(2)
+        # Sweep from MIN to MAX
+        print("Moving to MIN position...")
+        servo_x.duty_u16(MIN_DUTY)
+        servo_y.duty_u16(MIN_DUTY)
+        time.sleep(1.0)
+        
+        # Sweep to Center
+        print("Moving to CENTER position...")
+        servo_x.duty_u16(MID_DUTY)
+        servo_y.duty_u16(MID_DUTY)
+        time.sleep(1.0)
+        
+        # Sweep to MAX
+        print("Moving to MAX position...")
+        servo_x.duty_u16(MAX_DUTY)
+        servo_y.duty_u16(MAX_DUTY)
+        time.sleep(1.0)
 
 except KeyboardInterrupt:
-    # Clean up and turn off PWM on exit
-    print("\nStopping PWM...")
-    servo1.deinit()
-    servo2.deinit()
-    print("Test finished.")
+    print("\nTest stopped. Centering servos before exiting...")
+    servo_x.duty_u16(MID_DUTY)
+    servo_y.duty_u16(MID_DUTY)
+    time.sleep(0.5)
+    # Deinitialize PWM to safely release the pins
+    servo_x.deinit()
+    servo_y.deinit()
+    print("Servos disconnected safely.")
