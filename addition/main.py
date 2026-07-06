@@ -39,7 +39,7 @@ except ImportError:
     SSL_CONTEXT = None
 
 # ---------------- Config ----------------
-SERIAL_PORT = "/dev/tty.usbmodem1101"   # <-- CHANGE THIS to your XIAO RP2040 port
+SERIAL_PORT = "/dev/cu.usbmodem101" 
 BAUD_RATE = 115200
 
 JAW_OPEN_THRESHOLD = 0.5    # 0.0-1.0, how far mouth must open to count as "open"

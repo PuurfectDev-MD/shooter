@@ -1,3 +1,4 @@
+#should run at startup
 import time
 from machine import Pin, PWM
 from control import map_value, x_axis, y_axis, joystick_x, joystick_y, filtered_x, filtered_y, get_filtered_reading, MIN_DUTY, MAX_DUTY, joy_switch,slider_servo
