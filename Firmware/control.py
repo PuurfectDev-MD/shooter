@@ -1,15 +1,14 @@
 import time
 from machine import Pin, PWM, ADC
 
-# Servo PWM pins mapped to D3 and D4
 x_axis = PWM(Pin(29), freq=50)
 y_axis = PWM(Pin(4), freq=50)
 
-# Joystick ADC pins mapped to D1 and D2 (GPIO 27 and 28)
+slider_servo = PWM(Pin(3), freq=50)
+
 joystick_x = ADC(Pin(27))
 joystick_y = ADC(Pin(28))
-
-# CRITICAL FIX: No .atten() lines here! They crash the RP2040.
+joy_switch = Pin(6, Pin.IN, Pin.PULL_UP)
 
 CENTER_VAL = 32768
 DEADZONE = 2000
@@ -33,3 +32,5 @@ def get_filtered_reading(adc_pin, current_filtered):
 
 def map_value(x, in_min, in_max, out_min, out_max):
     return int((x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min)
+
+

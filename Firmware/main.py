@@ -1,10 +1,44 @@
 import time
 from machine import Pin, PWM
-from control import map_value, x_axis, y_axis, joystick_x, joystick_y, filtered_x, filtered_y, get_filtered_reading, MIN_DUTY, MAX_DUTY
+from control import map_value, x_axis, y_axis, joystick_x, joystick_y, filtered_x, filtered_y, get_filtered_reading, MIN_DUTY, MAX_DUTY, joy_switch,slider_servo
 import uasyncio as asyncio
 import motor
 import setup
 from setup import SLIDER_POT
+import sys
+import select
+
+poll = select.poll()
+poll.register(sys.stdin, select.POLLIN)
+
+
+async def read_serial():
+    while True:
+        events = poll.poll(0)  
+        if events:
+            line = sys.stdin.readline().strip()
+            if line == "F":
+                print("FIRE command received from serial")
+                motor.set_motor_a()
+                await asyncio.sleep(0.1)
+                motor.stop_slider_motor()
+        await asyncio.sleep_ms(20)
+
+async def read_switch():
+    while True:
+        value = joy_switch.value()
+        if value == 0:
+            print("Rotating the servo to drop")
+            motor.set_motor_a()
+            await asyncio.sleep(0.1)
+            motor.stop_slider_motor()
+    
+            while joy_switch.value() == 0:
+                await asyncio.sleep_ms(50) 
+                
+            print("Button released. Ready for next drop.")
+            
+        await asyncio.sleep_ms(200)
 
 async def main_loop():
     global x_duty, y_duty, filtered_x, filtered_y
@@ -17,9 +51,7 @@ async def main_loop():
         
         x_axis.duty_u16(duty_x)
         y_axis.duty_u16(duty_y)
-        
-        print(f"x_duty= {duty_x}")
-        print(f"y_duty = {duty_y}")
+      
         await asyncio.sleep_ms(20)
         
 async def read_pot_value():
@@ -38,12 +70,14 @@ async def read_pot_value():
 async def main():
     print("Initializing servos to idle/stop position...")
 
-    # Fixed: Replaced ESP32 8-bit .duty(77) with RP2040 16-bit center value (~4915)
     x_axis.duty_u16(4915)  
-    y_axis.duty_u16(4915) 
+    y_axis.duty_u16(4915)
+    slider_servo.duty_u16(4915)
     await asyncio.sleep_ms(400) 
     
     print("Starting background loops...")
-    await asyncio.gather(main_loop(), read_pot_value())
+    await asyncio.gather(main_loop(), read_pot_value(), read_switch(), read_serial())
 
 asyncio.run(main())
+
+
