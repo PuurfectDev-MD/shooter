@@ -1,30 +1,29 @@
 """
-Candy Turret - Face Gesture Trigger
-------------------------------------
-Runs on your PC (not the RP2040). Watches your webcam, detects when you
-open your mouth (the "gesture") using MediaPipe's FaceLandmarker task,
-and sends a single byte 'F' over serial to the XIAO RP2040, which is
-running main.py (MicroPython) and will fire the shooting motors when it
-receives that byte.
+Candy Turret - Hand Gesture Trigger ("6-7" seesaw motion)
+-----------------------------------------------------------
+Runs on your PC. Watches your webcam for BOTH hands moving up and down
+(the "6-7" gesture) and sends a single byte 'F' over serial to the
+XIAO RP2040, same as face_gesture_serial.py does for mouth-open.
 
-NOTE: newer mediapipe versions (0.10.3x+) removed the old
-mp.solutions.face_mesh API. This script uses the current replacement,
-the MediaPipe Tasks API, which needs a small model file - it will be
-downloaded automatically the first time you run this script (needs
-internet once, ~4MB).
+Unlike mouth-open detection, this needs to look at motion over time,
+not just a single frame - so it tracks each hand's vertical position
+over the last ~1.5 seconds and checks for enough up/down reversals
+with enough amplitude to count as a real wave, not just jitter.
 
 Install deps:
-    pip install opencv-python mediapipe pyserial
+    pip install opencv-python mediapipe pyserial certifi
 
-Then edit SERIAL_PORT below to match your board:
-    Windows:      "COM5"  (check Device Manager)
-    macOS/Linux:  "/dev/ttyACM0" or "/dev/tty.usbmodemXXXX" (check `ls /dev/tty.*`)
+Then edit SERIAL_PORT below to match your board (check Thonny's port
+dropdown - it changes on macOS every time the board reconnects):
+    Windows:      "COM5"
+    macOS:        "/dev/cu.usbmodemXXXX"  (NOT "tty.", use "cu.")
 """
 
 import os
 import ssl
 import time
 import urllib.request
+from collections import deque
 
 import cv2
 import mediapipe as mp
@@ -39,25 +38,27 @@ except ImportError:
     SSL_CONTEXT = None
 
 # ---------------- Config ----------------
-SERIAL_PORT = "/dev/cu.usbmodem101" 
+SERIAL_PORT = "/dev/cu.usbmodem1101"   # <-- CHANGE THIS to match Thonny's port dropdown
 BAUD_RATE = 115200
 
-JAW_OPEN_THRESHOLD = 0.5    # 0.0-1.0, how far mouth must open to count as "open"
-CONSEC_FRAMES = 3           # frames mouth must stay open before it counts
-TRIGGER_COOLDOWN = 1.5      # seconds between allowed shots (debounce)
+TRIGGER_COOLDOWN = 2.0       # seconds between allowed shots (debounce)
 
-MODEL_PATH = "face_landmarker.task"
+WINDOW_SECONDS = 1.5         # how far back we look for the wave pattern
+MIN_AMPLITUDE = 0.12         # normalized (0-1 of frame height) vertical range required
+MIN_REVERSALS = 3            # direction changes needed within the window (e.g. up-down-up)
+NOISE_EPS = 0.01             # ignore tiny frame-to-frame jitter below this when counting reversals
+
+MODEL_PATH = "hand_landmarker.task"
 MODEL_URL = (
-    "https://storage.googleapis.com/mediapipe-models/face_landmarker/"
-    "face_landmarker/float16/1/face_landmarker.task"
+    "https://storage.googleapis.com/mediapipe-models/hand_landmarker/"
+    "hand_landmarker/float16/1/hand_landmarker.task"
 )
 
 
 def ensure_model():
     if os.path.exists(MODEL_PATH):
         return
-
-    print("Downloading face landmark model (one-time, ~4MB)...")
+    print("Downloading hand landmark model (one-time, ~8MB)...")
     try:
         if SSL_CONTEXT is not None:
             with urllib.request.urlopen(MODEL_URL, context=SSL_CONTEXT) as resp:
@@ -69,17 +70,15 @@ def ensure_model():
         print("Done.")
     except Exception as e:
         print(f"[!] Download failed: {e}")
-        print("    On macOS, this is usually a missing-certificates issue. Try running:")
-        print('    /Applications/Python\\ 3.13/Install\\ Certificates.command')
-        print("    (adjust the version folder name to match your Python install),")
-        print("    or run: pip install certifi")
+        print("    Try: pip install certifi")
+        print('    Or on macOS: /Applications/Python\\ 3.13/Install\\ Certificates.command')
         raise
 
 
 def connect_serial():
     try:
         ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
-        time.sleep(2)  # let the board reset after opening the port
+        time.sleep(2)
         print(f"Connected to {SERIAL_PORT}")
         return ser
     except Exception as e:
@@ -88,84 +87,111 @@ def connect_serial():
         return None
 
 
-def get_jaw_open_score(result):
-    if not result.face_blendshapes:
-        return 0.0
-    for category in result.face_blendshapes[0]:
-        if category.category_name == "jawOpen":
-            return category.score
-    return 0.0
+def open_camera():
+    for index in range(4):
+        cap = cv2.VideoCapture(index)
+        if not cap.isOpened():
+            cap.release()
+            continue
+        ok, frame = cap.read()
+        if ok and frame is not None:
+            print(f"Using camera index {index}")
+            return cap
+        cap.release()
+    return None
 
 
-def draw_landmarks(frame, result):
-    if not result.face_landmarks:
-        return
-    h, w = frame.shape[:2]
-    for landmark in result.face_landmarks[0]:
-        x = int(landmark.x * w)
-        y = int(landmark.y * h)
-        cv2.circle(frame, (x, y), 1, (0, 255, 0), -1)
+def count_reversals(values):
+    """Count direction changes in a sequence, ignoring tiny jitter."""
+    diffs = []
+    for a, b in zip(values, values[1:]):
+        d = b - a
+        if abs(d) > NOISE_EPS:
+            diffs.append(1 if d > 0 else -1)
+    reversals = 0
+    for a, b in zip(diffs, diffs[1:]):
+        if a != b:
+            reversals += 1
+    return reversals
+
+
+def is_waving(history):
+    """history: deque of (timestamp, y) for one hand."""
+    if len(history) < 5:
+        return False
+    ys = [y for _, y in history]
+    amplitude = max(ys) - min(ys)
+    if amplitude < MIN_AMPLITUDE:
+        return False
+    return count_reversals(ys) >= MIN_REVERSALS
 
 
 def main():
     ensure_model()
 
     base_options = mp_python.BaseOptions(model_asset_path=MODEL_PATH)
-    options = mp_vision.FaceLandmarkerOptions(
+    options = mp_vision.HandLandmarkerOptions(
         base_options=base_options,
-        output_face_blendshapes=True,
-        output_facial_transformation_matrixes=False,
-        num_faces=1,
+        num_hands=2,
         running_mode=mp_vision.RunningMode.VIDEO,
     )
-    landmarker = mp_vision.FaceLandmarker.create_from_options(options)
+    landmarker = mp_vision.HandLandmarker.create_from_options(options)
 
     ser = connect_serial()
-    cap = cv2.VideoCapture(0)
-    if not cap.isOpened():
-        print("[!] Could not open webcam.")
+    cap = open_camera()
+    if cap is None:
+        print("[!] Could not get a working camera stream.")
         return
 
-    consec = 0
+    # rolling per-hand wrist position history (WRIST landmark = index 0)
+    hand_histories = [deque(), deque()]
+
     last_trigger = 0.0
     start_time = time.time()
 
     while cap.isOpened():
         ok, frame = cap.read()
         if not ok:
+            print("[!] Lost camera frame - stopping.")
             break
 
         frame = cv2.flip(frame, 1)
+        h, w = frame.shape[:2]
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
         timestamp_ms = int((time.time() - start_time) * 1000)
 
         result = landmarker.detect_for_video(mp_image, timestamp_ms)
-        jaw_open = get_jaw_open_score(result)
-        draw_landmarks(frame, result)
-
-        triggered = False
-        if jaw_open > JAW_OPEN_THRESHOLD:
-            consec += 1
-        else:
-            consec = 0
 
         now = time.time()
-        if consec >= CONSEC_FRAMES and (now - last_trigger) > TRIGGER_COOLDOWN:
-            triggered = True
-            last_trigger = now
-            consec = 0
+        num_hands = len(result.hand_landmarks) if result.hand_landmarks else 0
 
-            print("FIRE gesture detected!")
-            if ser:
-                ser.write(b"F\n")
+        # update history for up to 2 hands, drop old points outside the window
+        for i in range(2):
+            if i < num_hands:
+                wrist = result.hand_landmarks[i][0]  # landmark 0 = wrist
+                hand_histories[i].append((now, wrist.y))
+                cx, cy = int(wrist.x * w), int(wrist.y * h)
+                cv2.circle(frame, (cx, cy), 8, (0, 255, 255), -1)
+            while hand_histories[i] and now - hand_histories[i][0][0] > WINDOW_SECONDS:
+                hand_histories[i].popleft()
+
+        triggered = False
+        if num_hands >= 2:
+            both_waving = is_waving(hand_histories[0]) and is_waving(hand_histories[1])
+            if both_waving and (now - last_trigger) > TRIGGER_COOLDOWN:
+                triggered = True
+                last_trigger = now
+                print("6-7 gesture detected - FIRE!")
+                if ser:
+                    ser.write(b"F\n")
 
         color = (0, 0, 255) if triggered else (0, 255, 0)
-        cv2.putText(frame, f"jawOpen: {jaw_open:.2f}", (10, 30),
+        cv2.putText(frame, f"Hands detected: {num_hands}", (10, 30),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
-        cv2.putText(frame, "Open mouth to fire | 'q' to quit", (10, 60),
+        cv2.putText(frame, "Wave both hands up/down to fire | 'q' to quit", (10, 60),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
-        cv2.imshow("Candy Turret - Face Gesture Trigger", frame)
+        cv2.imshow("Candy Turret - 6-7 Gesture Trigger", frame)
 
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break

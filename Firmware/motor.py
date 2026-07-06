@@ -12,8 +12,8 @@ def set_motor_a(speed):
 
 def set_motor_b(speed):
     if speed > 0:
-        bin1.duty_u16(speed)
-        bin2.duty_u16(0)
+        bin1.duty_u16(0)
+        bin2.duty_u16(speed)
     elif speed < 0:
         bin1.duty_u16(0)
         bin2.duty_u16(abs(speed))
