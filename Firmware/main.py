@@ -27,7 +27,7 @@ async def read_serial():
             if line == "F":
                 print("FIRE command received from serial")
                 motor.set_motor_a()
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(0.2)
                 motor.stop_slider_motor()
         await asyncio.sleep_ms(20)
 
@@ -37,7 +37,7 @@ async def read_switch():
         if value == 0:
             print("Rotating the servo to drop")
             motor.set_motor_a()
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.2)
             motor.stop_slider_motor()
     
             while joy_switch.value() == 0:
@@ -81,8 +81,7 @@ async def main_loop():
         # 5. Write smoothed values to the servos
         x_axis.duty_u16(current_duty_x)
         y_axis.duty_u16(current_duty_y)
-      
-        # Yield execution back to the asyncio event loop for 20ms
+                # Yield execution back to the asyncio event loop for 20ms
         await asyncio.sleep_ms(20)
         
 async def read_pot_value():
